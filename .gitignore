@@ -6,6 +6,11 @@ venv/
 .idea/
 .vscode/
 
+# PyInstaller build output
+build/
+dist/
+*.spec
+
 # Don't commit actual EQ logs
 eqlog_*.txt
 *.log

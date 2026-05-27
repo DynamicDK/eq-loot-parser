@@ -33,9 +33,26 @@ Workflow:
    - **Item names only** — one item per line.
    - **Items + character** — CSV with an `Item,Character` header row.
 
+## Standalone executable (no Python needed)
+
+To produce a single Windows `.exe` that runs on a machine without Python or any
+other tools installed:
+
+```
+python -m pip install pyinstaller   # one-time
+build_exe.bat
+```
+
+This writes `dist\eq-loot-viewer.exe`. Double-click it to run — it bundles the
+GUI, the parser, and the Python runtime into one file. (Build output under
+`build\`, `dist\`, and `*.spec` is git-ignored.)
+
 ## Requirements
 
-Python 3.10+ (uses `str | None` type hints). The GUI uses only the standard library (`tkinter`).
+- **To run the executable:** nothing — it's self-contained (Windows).
+- **To run from source or rebuild:** Python 3.10+ (uses `str | None` type hints).
+  The GUI uses only the standard library (`tkinter`); building the exe needs
+  [PyInstaller](https://pyinstaller.org/).
 
 ## Tests
 
