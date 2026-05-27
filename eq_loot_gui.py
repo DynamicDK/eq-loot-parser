@@ -1,9 +1,17 @@
-"""GUI for browsing EverQuest loot from a log file.
+"""GUI for browsing EverQuest loot from a log file and building a loot list.
 
-Left pane: characters who looted on the selected day.
-Right pane: items they looted, easy to select and copy.
+Workflow:
+  1. Pick a day and a character (left pane).
+  2. Check the items you want (middle pane). "Ungroup items" shows each
+     instance on its own row so you can pick individual copies.
+  3. "Add checked" moves them into the collected list (right pane), tagged
+     with the character that looted them.
+  4. Repeat across characters, then Copy or Export the list. Each of those
+     offers "Item names only" (one per line) or "Items + character" (CSV).
 """
 
+import csv
+import io
 import os
 import sys
 import tkinter as tk
@@ -16,16 +24,36 @@ from eq_loot import parse_log, owner_from_filename  # noqa: E402
 
 DEFAULT_LOG = r"C:\Users\Public\Daybreak Game Company\Installed Games\EverQuest\Logs\eqlog_Nandoor_teek.txt"
 
+CHECKED = "☑"    # ☑
+UNCHECKED = "☐"  # ☐
+
+
+def format_loot_text(collected, with_char):
+    """Render the collected (item, character) pairs for copy/export.
+
+    with_char=False -> one item name per line.
+    with_char=True  -> CSV with an "Item,Character" header row.
+    """
+    if not with_char:
+        return "\n".join(item for item, _ in collected)
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(["Item", "Character"])
+    for item, char in collected:
+        writer.writerow([item, char])
+    return buf.getvalue()
+
 
 class LootApp:
     def __init__(self, root):
         self.root = root
         root.title("EverQuest Loot Viewer")
-        root.geometry("900x600")
+        root.geometry("1150x640")
 
         self.events = []           # list of (date, char, qty, item)
         self.current_log = None
         self.owner = None
+        self.collected = []        # list of (item, character), one entry per item
 
         self._build_toolbar()
         self._build_panes()
@@ -47,19 +75,16 @@ class LootApp:
         self.date_combo.pack(side=tk.LEFT)
         self.date_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_chars())
 
-        self.exclude_trash = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar, text="Hide trash (meat/powder/low gems)",
-                        variable=self.exclude_trash,
-                        command=self.refresh_chars).pack(side=tk.LEFT, padx=10)
-
-        ttk.Button(bar, text="Copy selected items", command=self.copy_selected).pack(side=tk.RIGHT)
-        ttk.Button(bar, text="Copy all (this char)", command=self.copy_all).pack(side=tk.RIGHT, padx=4)
+        self.ungroup = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bar, text="Ungroup items (one row per copy)",
+                        variable=self.ungroup,
+                        command=self.refresh_items).pack(side=tk.LEFT, padx=10)
 
     def _build_panes(self):
         paned = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
-        # left: characters
+        # --- left: characters ---
         left = ttk.Frame(paned)
         ttk.Label(left, text="Characters").pack(anchor=tk.W)
         self.char_list = tk.Listbox(left, exportselection=False)
@@ -67,25 +92,61 @@ class LootApp:
         self.char_list.bind("<<ListboxSelect>>", lambda e: self.refresh_items())
         paned.add(left, weight=1)
 
-        # right: items
-        right = ttk.Frame(paned)
-        top = ttk.Frame(right)
-        top.pack(fill=tk.X)
-        ttk.Label(top, text="Items").pack(side=tk.LEFT)
-        ttk.Label(top, text="(Ctrl+click to multi-select, Ctrl+A to select all)",
-                  foreground="gray").pack(side=tk.LEFT, padx=6)
+        # --- middle: items for the selected character ---
+        middle = ttk.Frame(paned)
+        self.items_label = ttk.Label(middle, text="Items")
+        self.items_label.pack(anchor=tk.W)
+        ttk.Label(middle, text="(click a row to check it)", foreground="gray").pack(anchor=tk.W)
 
-        cols = ("qty", "item")
-        self.item_tree = ttk.Treeview(right, columns=cols, show="headings", selectmode="extended")
+        cols = ("check", "qty", "item")
+        self.item_tree = ttk.Treeview(middle, columns=cols, show="headings", selectmode="none")
+        self.item_tree.heading("check", text="✓")
         self.item_tree.heading("qty", text="Qty")
         self.item_tree.heading("item", text="Item")
-        self.item_tree.column("qty", width=60, anchor=tk.E, stretch=False)
-        self.item_tree.column("item", width=400, anchor=tk.W)
+        self.item_tree.column("check", width=34, anchor=tk.CENTER, stretch=False)
+        self.item_tree.column("qty", width=50, anchor=tk.E, stretch=False)
+        self.item_tree.column("item", width=340, anchor=tk.W)
         self.item_tree.pack(fill=tk.BOTH, expand=True)
-        self.item_tree.bind("<Control-a>", self._select_all_items)
-        self.item_tree.bind("<Control-A>", self._select_all_items)
-        self.item_tree.bind("<Control-c>", lambda e: self.copy_selected())
-        paned.add(right, weight=3)
+        self.item_tree.bind("<Button-1>", self._on_item_click)
+
+        item_btns = ttk.Frame(middle)
+        item_btns.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(item_btns, text="Check all", command=lambda: self._set_all_checks(True)).pack(side=tk.LEFT)
+        ttk.Button(item_btns, text="Uncheck all", command=lambda: self._set_all_checks(False)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(item_btns, text="Add checked →", command=self.add_checked).pack(side=tk.RIGHT)
+        paned.add(middle, weight=2)
+
+        # --- right: the collected loot list ---
+        right = ttk.Frame(paned)
+        self.collected_label = ttk.Label(right, text="Selected for loot (0)")
+        self.collected_label.pack(anchor=tk.W)
+
+        ccols = ("item", "character")
+        self.collected_tree = ttk.Treeview(right, columns=ccols, show="headings", selectmode="extended")
+        self.collected_tree.heading("item", text="Item")
+        self.collected_tree.heading("character", text="Character")
+        self.collected_tree.column("item", width=300, anchor=tk.W)
+        self.collected_tree.column("character", width=120, anchor=tk.W)
+        self.collected_tree.pack(fill=tk.BOTH, expand=True)
+
+        col_btns = ttk.Frame(right)
+        col_btns.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(col_btns, text="Remove selected", command=self.remove_collected).pack(side=tk.LEFT)
+        ttk.Button(col_btns, text="Clear", command=self.clear_collected).pack(side=tk.LEFT, padx=4)
+
+        self._build_output_button(col_btns, "Copy ▾", self.copy)
+        self._build_output_button(col_btns, "Export ▾", self.export)
+        paned.add(right, weight=2)
+
+    def _build_output_button(self, parent, text, action):
+        """A Menubutton whose two entries perform the action in each mode."""
+        mb = ttk.Menubutton(parent, text=text)
+        menu = tk.Menu(mb, tearoff=False)
+        menu.add_command(label="Item names only", command=lambda: action(False))
+        menu.add_command(label="Items + character", command=lambda: action(True))
+        mb["menu"] = menu
+        mb.pack(side=tk.RIGHT, padx=4)
+        return mb
 
     def _build_statusbar(self):
         self.status = tk.StringVar(value="No log loaded.")
@@ -122,18 +183,12 @@ class LootApp:
         day = self.date_var.get()
         if not day:
             return []
-        rows = [e for e in self.events if e[0].isoformat() == day]
-        if self.exclude_trash.get():
-            trash = ("meat", "powder", "hide", "pelt", "fang", "claw", "scale",
-                     "imperfect", "flawed", "nephrite", "jasper", "marble")
-            rows = [e for e in rows if not any(t in e[3].lower() for t in trash)]
-        return rows
+        return [e for e in self.events if e[0].isoformat() == day]
 
     def refresh_chars(self):
         self.char_list.delete(0, tk.END)
-        rows = self._current_day_events()
         totals = defaultdict(int)
-        for _, who, qty, _ in rows:
+        for _, who, qty, _ in self._current_day_events():
             totals[who] += qty
         for who in sorted(totals):
             self.char_list.insert(tk.END, f"{who}  ({totals[who]})")
@@ -152,41 +207,108 @@ class LootApp:
     def refresh_items(self):
         self.item_tree.delete(*self.item_tree.get_children())
         who = self._selected_char()
+        self.items_label.config(text=f"Items — {who}" if who else "Items")
         if not who:
             return
-        merged = defaultdict(int)
-        for _, c, qty, item in self._current_day_events():
-            if c == who:
+        rows = [(qty, item) for _, c, qty, item in self._current_day_events() if c == who]
+        if self.ungroup.get():
+            instances = []
+            for qty, item in rows:
+                instances.extend([item] * qty)
+            for item in sorted(instances):
+                self.item_tree.insert("", tk.END, values=(UNCHECKED, "", item))
+        else:
+            merged = defaultdict(int)
+            for qty, item in rows:
                 merged[item] += qty
-        for item in sorted(merged):
-            self.item_tree.insert("", tk.END, values=(merged[item], item))
+            for item in sorted(merged):
+                self.item_tree.insert("", tk.END, values=(UNCHECKED, merged[item], item))
 
-    # ---------- copy actions ----------
-    def _select_all_items(self, event=None):
+    # ---------- checkbox handling ----------
+    def _on_item_click(self, event):
+        row = self.item_tree.identify_row(event.y)
+        if row:
+            current = self.item_tree.set(row, "check")
+            self.item_tree.set(row, "check", UNCHECKED if current == CHECKED else CHECKED)
+        return "break"  # suppress default row selection
+
+    def _set_all_checks(self, checked):
+        mark = CHECKED if checked else UNCHECKED
         for iid in self.item_tree.get_children():
-            self.item_tree.selection_add(iid)
-        return "break"
+            self.item_tree.set(iid, "check", mark)
 
-    def _rows_to_text(self, iids):
-        lines = []
-        for iid in iids:
-            qty, item = self.item_tree.item(iid, "values")
-            qty = int(qty)
-            lines.append(f"{qty}x {item}" if qty > 1 else item)
-        return "\n".join(lines)
+    # ---------- collected list ----------
+    def add_checked(self):
+        who = self._selected_char()
+        if not who:
+            return
+        added = 0
+        for iid in self.item_tree.get_children():
+            if self.item_tree.set(iid, "check") != CHECKED:
+                continue
+            item = self.item_tree.set(iid, "item")
+            qty_str = self.item_tree.set(iid, "qty")
+            n = int(qty_str) if qty_str else 1
+            self.collected.extend([(item, who)] * n)
+            added += n
+            self.item_tree.set(iid, "check", UNCHECKED)
+        if added:
+            self.refresh_collected()
+            self.status.set(f"Added {added} item(s) from {who} to the list.")
+        else:
+            self.status.set("No items checked.")
 
-    def _push_clipboard(self, text):
+    def refresh_collected(self):
+        self.collected_tree.delete(*self.collected_tree.get_children())
+        for item, char in self.collected:
+            self.collected_tree.insert("", tk.END, values=(item, char))
+        self.collected_label.config(text=f"Selected for loot ({len(self.collected)})")
+
+    def remove_collected(self):
+        sel = set(self.collected_tree.selection())
+        if not sel:
+            self.status.set("Select rows in the list to remove them.")
+            return
+        children = self.collected_tree.get_children()
+        self.collected = [pair for iid, pair in zip(children, self.collected) if iid not in sel]
+        self.refresh_collected()
+
+    def clear_collected(self):
+        self.collected = []
+        self.refresh_collected()
+
+    # ---------- copy / export ----------
+    def _format_text(self, with_char):
+        return format_loot_text(self.collected, with_char)
+
+    def copy(self, with_char):
+        if not self.collected:
+            self.status.set("List is empty — nothing to copy.")
+            return
+        text = self._format_text(with_char)
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.root.update()  # ensure clipboard persists after window closes
-        self.status.set(f"Copied {text.count(chr(10)) + 1 if text else 0} line(s) to clipboard.")
+        self.status.set(f"Copied {len(self.collected)} item(s) to clipboard.")
 
-    def copy_selected(self):
-        iids = self.item_tree.selection() or self.item_tree.get_children()
-        self._push_clipboard(self._rows_to_text(iids))
-
-    def copy_all(self):
-        self._push_clipboard(self._rows_to_text(self.item_tree.get_children()))
+    def export(self, with_char):
+        if not self.collected:
+            self.status.set("List is empty — nothing to export.")
+            return
+        if with_char:
+            ext, ftypes, default = ".csv", [("CSV", "*.csv"), ("All", "*.*")], "loot.csv"
+        else:
+            ext, ftypes, default = ".txt", [("Text", "*.txt"), ("All", "*.*")], "loot.txt"
+        path = filedialog.asksaveasfilename(defaultextension=ext, filetypes=ftypes, initialfile=default)
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(self._format_text(with_char))
+        except Exception as e:
+            messagebox.showerror("Export failed", str(e))
+            return
+        self.status.set(f"Exported {len(self.collected)} item(s) to {os.path.basename(path)}.")
 
 
 def main():

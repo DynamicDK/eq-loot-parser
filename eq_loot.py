@@ -62,8 +62,6 @@ def main(argv=None):
     ap.add_argument("log_file")
     ap.add_argument("--date", help="YYYY-MM-DD; defaults to the most recent loot day in the log")
     ap.add_argument("--chars", help="Comma-separated character names to include (case-insensitive)")
-    ap.add_argument("--exclude-trash", action="store_true",
-                    help="Exclude common tradeskill / trash drops (meat, powders, low gems)")
     args = ap.parse_args(argv)
 
     owner = owner_from_filename(args.log_file)
@@ -82,19 +80,12 @@ def main(argv=None):
     if args.chars:
         char_filter = {c.strip().lower() for c in args.chars.split(",") if c.strip()}
 
-    trash_substrings = {
-        "meat", "powder", "hide", "pelt", "fang", "claw", "scale",
-        "imperfect", "flawed", "nephrite", "jasper", "marble",
-    }
-
     # character -> item -> total quantity
     loot = defaultdict(lambda: defaultdict(int))
     for d, who, qty, item in events:
         if d != target_date:
             continue
         if char_filter and who.lower() not in char_filter:
-            continue
-        if args.exclude_trash and any(t in item.lower() for t in trash_substrings):
             continue
         loot[who][item] += qty
 
