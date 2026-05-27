@@ -59,11 +59,3 @@ GUI, the parser, and the Python runtime into one file. (Build output under
 - **To run from source or rebuild:** Python 3.10+ (uses `str | None` type hints).
   The GUI uses only the standard library (`tkinter`); building the exe needs
   [PyInstaller](https://pyinstaller.org/).
-
-## Tests
-
-```
-python -m unittest discover -s tests
-```
-
-Standard-library `unittest` only — no extra dependencies.
