@@ -17,7 +17,8 @@ from collections import defaultdict
 from datetime import datetime
 
 LOOT_RE = re.compile(
-    r"^\[(?P<ts>[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2} \d{4})\] "
+    # EQ pads single-digit days with a second space, e.g. "Wed Dec  3 ...".
+    r"^\[(?P<ts>[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\] "
     r"--(?P<who>You|[A-Z][a-zA-Z]+) (?:have|has) looted "
     r"(?P<item>.+?) from (?P<source>.+?)\s*\.--\s*$"
 )

@@ -69,6 +69,17 @@ class ParseLogTests(unittest.TestCase):
         events = list(parse_log(self.path, None))
         self.assertEqual(events[0][1], "You")
 
+    def test_single_digit_day_with_padded_space(self):
+        # EQ pads single-digit days with a second space: "Wed Dec  3".
+        fd, path = tempfile.mkstemp(suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("[Wed Dec  3 21:15:33 2025] --Bixie has looted a Rusty Dagger from a rat.--\n")
+        try:
+            events = list(parse_log(path, "Nandoor"))
+        finally:
+            os.remove(path)
+        self.assertEqual(events, [(date(2025, 12, 3), "Bixie", 1, "Rusty Dagger")])
+
 
 class FormatLootTextTests(unittest.TestCase):
     def setUp(self):
