@@ -2,6 +2,12 @@
 
 Parse EverQuest client logs to extract loot, grouped by character and filtered by date.
 
+## Download
+
+**[⬇ Download eq-loot-viewer.exe](https://github.com/DynamicDK/eq-loot-parser/releases/latest/download/eq-loot-viewer.exe)** — standalone Windows executable, no Python or other tools required. Download and run.
+
+All versions are on the [Releases page](https://github.com/DynamicDK/eq-loot-parser/releases).
+
 ## Files
 
 - `eq_loot.py` — CLI parser. Reads an `eqlog_<Name>_<server>.txt` file and prints loot grouped by character for a given day.
