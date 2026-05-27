@@ -259,18 +259,20 @@ class LootApp:
             self.status.set("No items checked.")
 
     def refresh_collected(self):
+        # iid == index into self.collected, so removal stays correct regardless
+        # of insertion order or future mutations.
         self.collected_tree.delete(*self.collected_tree.get_children())
-        for item, char in self.collected:
-            self.collected_tree.insert("", tk.END, values=(item, char))
+        for idx, (item, char) in enumerate(self.collected):
+            self.collected_tree.insert("", tk.END, iid=str(idx), values=(item, char))
         self.collected_label.config(text=f"Selected for loot ({len(self.collected)})")
 
     def remove_collected(self):
-        sel = set(self.collected_tree.selection())
+        sel = self.collected_tree.selection()
         if not sel:
             self.status.set("Select rows in the list to remove them.")
             return
-        children = self.collected_tree.get_children()
-        self.collected = [pair for iid, pair in zip(children, self.collected) if iid not in sel]
+        remove = {int(iid) for iid in sel}
+        self.collected = [pair for i, pair in enumerate(self.collected) if i not in remove]
         self.refresh_collected()
 
     def clear_collected(self):
@@ -303,7 +305,9 @@ class LootApp:
         if not path:
             return
         try:
-            with open(path, "w", encoding="utf-8", newline="") as f:
+            # Default newline handling translates \n -> \r\n on Windows, which
+            # suits both the plain-text and (RFC 4180) CSV outputs.
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(self._format_text(with_char))
         except Exception as e:
             messagebox.showerror("Export failed", str(e))

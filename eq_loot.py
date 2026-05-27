@@ -50,7 +50,8 @@ def parse_log(path: str, owner: str | None):
             m = LOOT_RE.match(line)
             if not m:
                 continue
-            ts = datetime.strptime(m.group("ts"), "%a %b %d %H:%M:%S %Y")
+            # Collapse the doubled space EQ uses for single-digit days before parsing.
+            ts = datetime.strptime(" ".join(m.group("ts").split()), "%a %b %d %H:%M:%S %Y")
             who = m.group("who")
             if who == "You":
                 who = owner or "You"
