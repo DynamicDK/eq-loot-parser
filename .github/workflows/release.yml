@@ -1,0 +1,68 @@
+name: Build and release signed executable
+
+# Builds eq-loot-viewer.exe on a clean Windows runner, has it code-signed by
+# SignPath (free for open-source), and attaches the SIGNED exe to the GitHub
+# Release for the pushed tag. See SIGNING.md for the one-time SignPath setup.
+#
+# Until SignPath is configured (org id + SIGNPATH_API_TOKEN secret), the
+# "submit signing request" step will fail — that is expected.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create/update the GitHub Release
+
+jobs:
+  build-and-sign:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build single-file executable
+        run: pyinstaller --onefile --windowed --name eq-loot-viewer --clean eq_loot_gui.py
+
+      - name: Upload unsigned artifact
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: eq-loot-viewer-unsigned
+          path: dist/eq-loot-viewer.exe
+          if-no-files-found: error
+
+      - name: Submit signing request to SignPath
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          # The three values below are NOT secret. Fill them in per SIGNING.md.
+          organization-id: 'REPLACE_WITH_SIGNPATH_ORGANIZATION_ID'
+          project-slug: 'eq-loot-parser'
+          signing-policy-slug: 'release-signing'
+          github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+          wait-for-completion: true
+          # SignPath decompresses the signed artifact here by default,
+          # so signed/eq-loot-viewer.exe will exist after this step.
+          output-artifact-directory: 'signed'
+
+      - name: Publish signed exe to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "signed/eq-loot-viewer.exe" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Signed Windows build of eq-loot-viewer. No Python required." \
+          || gh release upload "$GITHUB_REF_NAME" "signed/eq-loot-viewer.exe" --clobber

@@ -11,6 +11,13 @@ build/
 dist/
 *.spec
 
+# Nuitka build output
+nuitka-build/
+nuitka-onedir/
+*.build/
+*.dist/
+*.onefile-build/
+
 # Don't commit actual EQ logs
 eqlog_*.txt
 *.log
